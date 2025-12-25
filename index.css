@@ -1,0 +1,81 @@
+
+/* ==========================================================================
+   CONFIGURAÇÕES GLOBAIS E RESETS
+   ========================================================================== */
+
+:root {
+  --primary-blue: #1e40af;
+  --bg-main: #f8fafc;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-main);
+}
+
+/* ==========================================================================
+   ANIMAÇÕES CUSTOMIZADAS
+   ========================================================================== */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-slide-right {
+  animation: slideInRight 0.3s ease-out forwards;
+}
+
+/* ==========================================================================
+   COMPONENTES E UTILITÁRIOS
+   ========================================================================== */
+
+/* Scrollbar Estilizada */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Glassmorphism Effect para Modais */
+.glass-overlay {
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+/* Card Style Standard */
+.ssvp-card {
+  @apply bg-white border border-slate-200 shadow-sm rounded-2xl;
+}
+
+/* Input Style Standard */
+.ssvp-input {
+  @apply w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all;
+}
+
+/* Button Primary */
+.ssvp-btn-primary {
+  @apply bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2;
+}
