@@ -50,6 +50,12 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
   // Estados para controlar a visibilidade de campos condicionais de membros no form principal
   const [membrosRendaVisivel, setMembrosRendaVisivel] = useState<{ [key: number]: boolean }>({});
   const [membrosComorbidadeVisivel, setMembrosComorbidadeVisivel] = useState<{ [key: number]: boolean }>({});
+  const [ocupacaoAssistidoValue, setOcupacaoAssistidoValue] = useState<string>('');
+  const [ocupacoesMembros, setOcupacoesMembros] = useState<{ [key: number]: string }>({});
+
+  // Usar useMemo para criar uma string de dependência estável
+  const familyKey = family ? `${family.id}-${family.ocupacao}-${family.renda}-${family.comorbidade}-${family.moradoresCount}` : '';
+  const membersKey = members.map(m => `${m.id}:${m.ocupacao}:${m.renda}:${m.comorbidade}`).join('|');
 
   useEffect(() => {
     if ((isEditing || initialEdit) && family) {
@@ -57,18 +63,27 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
       setTemRendaAssistido(family.renda !== 'R$ 0,00' && family.renda !== '');
       setTemComorbidadeAssistido(family.comorbidade !== 'Não possui' && family.comorbidade !== '');
       
+      const ocupacaoValue = family.ocupacao || members[0]?.ocupacao || '';
+      setOcupacaoAssistidoValue(ocupacaoValue);
+      
       const rendaVis: { [key: number]: boolean } = {};
       const comoVis: { [key: number]: boolean } = {};
+      const ocupacoes: { [key: number]: string } = {};
       members.forEach((m, idx) => {
         if (idx > 0) {
           rendaVis[idx] = m.renda !== 'R$ 0,00' && m.renda !== '';
           comoVis[idx] = m.comorbidade !== 'Não possui' && m.comorbidade !== '';
+          ocupacoes[idx] = m.ocupacao || '';
         }
       });
       setMembrosRendaVisivel(rendaVis);
       setMembrosComorbidadeVisivel(comoVis);
+      setOcupacoesMembros(ocupacoes);
+    } else {
+      setOcupacaoAssistidoValue('');
+      setOcupacoesMembros({});
     }
-  }, [isEditing, initialEdit, family, members]);
+  }, [isEditing, initialEdit, familyKey, membersKey]);
 
   useEffect(() => {
     if (isAdding && families.length > 0) {
@@ -542,6 +557,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
           const nomeAssistido = formData.get('nome') as string;
           const idadeAssistido = Number(formData.get('idade_assistido'));
           
+          // Usar o valor do estado controlado em vez do FormData
+          const ocupacaoAssistido = ocupacaoAssistidoValue || (formData.get('ocupacao_assistido') as string);
           const formMembers: Member[] = [{
             id: isEditing ? (targetMembers[0]?.id || `${familyId}_head`) : `${familyId}_head`,
             familyId: familyId,
@@ -549,8 +566,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
             idade: idadeAssistido,
             parentesco: 'Próprio(a)',
             nascimento: formData.get('nascimento') as string,
-            ocupacao: formData.get('ocupacao_assistido') as string,
-            observacaoOcupacao: formData.get('obs_ocupacao_assistido') as string,
+            ocupacao: ocupacaoAssistido || undefined,
+            observacaoOcupacao: (formData.get('obs_ocupacao_assistido') as string) || undefined,
             renda: temRendaAssistido ? (formData.get('renda_valor_assistido') as string) : 'R$ 0,00',
             comorbidade: temComorbidadeAssistido ? (formData.get('comorbidade_detalhe_assistido') as string) : 'Não possui'
           }];
@@ -561,6 +578,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
               if (nome) {
                 const possuiRenda = formData.get(`member_possui_renda_${i}`) === 'Sim';
                 const possuiComorbidade = formData.get(`member_possui_comorbidade_${i}`) === 'Sim';
+                // Usar o valor do estado controlado em vez do FormData
+                const ocupacaoMembro = ocupacoesMembros[i] || (formData.get(`member_ocupacao_${i}`) as string);
                 formMembers.push({
                   id: isEditing && targetMembers[i] ? targetMembers[i].id : `${familyId}_m_${i}`,
                   familyId: familyId,
@@ -568,8 +587,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                   idade: Number(formData.get(`member_idade_${i}`)),
                   parentesco: formData.get(`member_parentesco_${i}`) as string,
                   nascimento: '',
-                  ocupacao: formData.get(`member_ocupacao_${i}`) as string,
-                  observacaoOcupacao: formData.get(`member_obs_ocupacao_${i}`) as string,
+                  ocupacao: ocupacaoMembro || undefined,
+                  observacaoOcupacao: (formData.get(`member_obs_ocupacao_${i}`) as string) || undefined,
                   renda: possuiRenda ? (formData.get(`member_renda_valor_${i}`) as string) : 'R$ 0,00',
                   comorbidade: possuiComorbidade ? (formData.get(`member_comorbidade_detalhe_${i}`) as string) : 'Não possui'
                 });
@@ -580,7 +599,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
           const savedFamily: Family = {
             id: familyId,
             ficha: formData.get('ficha') as string,
-            dataCadastro: isEditing ? (family?.dataCadastro || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0],
+            dataCadastro: formData.get('dataCadastro') as string,
             nomeAssistido: nomeAssistido,
             estadoCivil: formData.get('estadoCivil') as string,
             nascimento: formData.get('nascimento') as string,
@@ -598,7 +617,9 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
             comorbidade: temComorbidadeAssistido ? (formData.get('comorbidade_detalhe_assistido') as string) : 'Não possui',
             situacaoImovel: formData.get('imovel') as string,
             observacao: formData.get('obs') as string,
-            status: formData.get('status') as 'Ativo' | 'Inativo' | 'Pendente'
+            status: formData.get('status') as 'Ativo' | 'Inativo' | 'Pendente',
+            ocupacao: ocupacaoAssistido && ocupacaoAssistido.trim() ? ocupacaoAssistido.trim() : undefined,
+            observacaoOcupacao: (formData.get('obs_ocupacao_assistido') as string)?.trim() || undefined
           };
 
           const db = getDb();
@@ -628,7 +649,17 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                 <label className="text-xs font-bold text-slate-700">Ficha N°</label>
                 <input name="ficha" defaultValue={isEditing ? targetFamily?.ficha : nextFicha} required className="w-full px-4 py-2 bg-blue-50/50 border border-blue-100 rounded-lg font-bold text-blue-700 outline-none" />
               </div>
-              <div className="md:col-span-3 space-y-2">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700">Data de Cadastro</label>
+                <input 
+                  name="dataCadastro" 
+                  type="date" 
+                  defaultValue={isEditing ? (targetFamily?.dataCadastro || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0]} 
+                  required 
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                />
+              </div>
+              <div className="md:col-span-2 space-y-2">
                 <label className="text-xs font-bold text-slate-700">Nome Completo</label>
                 <input name="nome" defaultValue={isEditing ? targetFamily?.nomeAssistido : ''} required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
@@ -650,13 +681,18 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">Ocupação Atual</label>
-                <select name="ocupacao_assistido" defaultValue={isEditing ? targetMembers[0]?.ocupacao : ''} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                <select 
+                  name="ocupacao_assistido" 
+                  value={ocupacaoAssistidoValue}
+                  onChange={(e) => setOcupacaoAssistidoValue(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                >
                   <OcupacaoOptions />
                 </select>
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">Observação Ocupação</label>
-                <input name="obs_ocupacao_assistido" defaultValue={isEditing ? targetMembers[0]?.observacaoOcupacao : ''} placeholder="Ex: Vendedor de balas, BPC, etc" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input name="obs_ocupacao_assistido" defaultValue={isEditing ? (targetFamily?.observacaoOcupacao || targetMembers[0]?.observacaoOcupacao || '') : ''} placeholder="Ex: Vendedor de balas, BPC, etc" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">Possui Renda?</label>
@@ -733,6 +769,18 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                 <label className="text-xs font-bold text-slate-700">Telefone / Celular</label>
                 <input name="telefone" defaultValue={isEditing ? targetFamily?.telefone : ''} placeholder="(00) 00000-0000" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700">WhatsApp</label>
+                <label className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                  <input
+                    name="whatsapp"
+                    type="checkbox"
+                    defaultChecked={isEditing ? !!targetFamily?.whatsapp : false}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-slate-600 font-medium">Tem WhatsApp</span>
+                </label>
+              </div>
             </div>
           </section>
 
@@ -789,7 +837,12 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                         </div>
                         <div className="md:col-span-1 space-y-1">
                           <label className="text-[10px] font-bold text-slate-400 uppercase">Ocupação</label>
-                          <select name={`member_ocupacao_${idx}`} defaultValue={memberData?.ocupacao || ''} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm">
+                          <select 
+                            name={`member_ocupacao_${idx}`} 
+                            value={ocupacoesMembros[idx] || ''}
+                            onChange={(e) => setOcupacoesMembros(prev => ({ ...prev, [idx]: e.target.value }))}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm"
+                          >
                             <OcupacaoOptions />
                           </select>
                         </div>
@@ -1082,9 +1135,27 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
               </div>
               <p className="text-slate-500 mt-1 flex items-center gap-2 text-xs md:text-sm flex-wrap">
                 <FileText size={14} className="md:w-4 md:h-4 shrink-0" /> 
-                <span className="truncate">Ficha N° {family.ficha} • CPF: {family.cpf || 'Não Informado'} • RG: {family.rg || 'Não Informado'}</span>
+                <span className="truncate">Ficha N° {family.ficha}</span>
               </p>
+              {family.dataCadastro && (
+                <p className="text-slate-400 mt-1 flex items-center gap-2 text-xs">
+                  <Calendar size={12} className="shrink-0" /> 
+                  <span>Cadastrado em: {new Date(family.dataCadastro).toLocaleDateString('pt-BR')}</span>
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 md:gap-4 mt-3 md:mt-4">
+                {family.cpf && (
+                  <span className="flex items-center gap-1.5 text-xs md:text-sm text-slate-600 px-2 md:px-3 py-1 md:py-1.5 bg-slate-50 rounded-lg border border-slate-100">
+                    <CreditCard size={12} className="md:w-[14px] md:h-[14px] text-purple-500 shrink-0" /> 
+                    <span className="truncate">CPF: {family.cpf}</span>
+                  </span>
+                )}
+                {family.rg && (
+                  <span className="flex items-center gap-1.5 text-xs md:text-sm text-slate-600 px-2 md:px-3 py-1 md:py-1.5 bg-slate-50 rounded-lg border border-slate-100">
+                    <ShieldCheck size={12} className="md:w-[14px] md:h-[14px] text-indigo-500 shrink-0" /> 
+                    <span className="truncate">RG: {family.rg}</span>
+                  </span>
+                )}
                 <span className="flex items-center gap-1.5 text-xs md:text-sm text-slate-600 px-2 md:px-3 py-1 md:py-1.5 bg-slate-50 rounded-lg border border-slate-100">
                   <Phone size={12} className="md:w-[14px] md:h-[14px] text-blue-500 shrink-0" /> 
                   <span className="truncate">{family.telefone || 'Sem Telefone'}</span>

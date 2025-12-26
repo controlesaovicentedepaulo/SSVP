@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS public.families (
   "situacaoImovel" TEXT,
   observacao TEXT,
   status TEXT,
+  ocupacao TEXT,
+  "observacaoOcupacao" TEXT,
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
