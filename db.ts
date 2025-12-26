@@ -50,9 +50,17 @@ const stripMeta = <T extends Record<string, any>>(row: T): Omit<T, 'user_id' | '
 };
 
 const scheduleSync = (data: DbSchema) => {
-  if (suppressSync) return;
+  if (suppressSync) {
+    return;
+  }
   const supabase = getSupabaseClient();
-  if (!supabase || !currentUserId) return;
+  if (!supabase) {
+    return;
+  }
+  if (!currentUserId) {
+    console.warn('[SSVP][sync] ⚠️ currentUserId não definido - salvando apenas no localStorage. Faça login novamente para sincronizar com o Supabase.');
+    return;
+  }
 
   pendingDb = data;
   if (syncTimer) window.clearTimeout(syncTimer);
@@ -62,6 +70,7 @@ const scheduleSync = (data: DbSchema) => {
     pendingDb = null;
     syncTimer = null;
     if (!snapshot || !currentUserId) return;
+    console.log('[SSVP][sync] Iniciando sincronização com Supabase...');
     void syncDbToSupabase(snapshot, currentUserId);
   }, 700);
 };
@@ -303,15 +312,46 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
       }
 
         if (rows.length > 0) {
-          const payload = rows.map(r => ({ ...r, user_id: userId }));
-          const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
+          // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
+          const payload = rows.map(r => {
+            const clean: any = { ...r, user_id: userId };
+            Object.keys(clean).forEach(key => {
+              // Remove undefined e strings vazias (exceto campos obrigatórios)
+              if (clean[key] === undefined || (typeof clean[key] === 'string' && clean[key].trim() === '' && key !== 'id' && key !== 'user_id')) {
+                delete clean[key];
+              }
+            });
+            return clean;
+          });
+
+          // Debug leve (sem PII): confirma campos enviados
+          if (table === 'families') {
+            const sample = payload[0];
+            if (sample) {
+              console.info('[SSVP][sync] families payload keys:', Object.keys(sample).sort());
+              console.info('[SSVP][sync] families sample flags:', {
+                has_ocupacao: Object.prototype.hasOwnProperty.call(sample, 'ocupacao'),
+                has_observacaoOcupacao: Object.prototype.hasOwnProperty.call(sample, 'observacaoOcupacao'),
+                id: sample.id
+              });
+            }
+          }
+
+          const { error, data } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
           if (error) {
             // Se a tabela não existe (404/PGRST116), apenas loga e continua
-            if (error.code === 'PGRST116' || error.code === '42P01' || error.message?.includes('does not exist')) {
-              console.warn(`[SSVP] Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
+            if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
+              console.warn(`[SSVP] Tabela ${table} não encontrada. Execute o SQL em Configurações.`, error);
             } else {
-              console.warn(`[SSVP] Erro ao sincronizar ${table}:`, error.message);
+              console.error(`[SSVP] ❌ Erro ao sincronizar ${table}:`, {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                hint: error.hint
+              });
             }
+          } else {
+            console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
           }
         }
     } catch (err: any) {

@@ -21,6 +21,8 @@ export interface Family {
   situacaoImovel: string;
   observacao: string;
   status: 'Ativo' | 'Inativo' | 'Pendente';
+  ocupacao?: string;
+  observacaoOcupacao?: string;
 }
 
 export interface Member {
@@ -72,4 +74,4 @@ export interface AppSettings {
   supabaseKey: string;
 }
 
-export type AppView = 'dashboard' | 'families' | 'family-details' | 'visits' | 'deliveries';
+export type AppView = 'dashboard' | 'families' | 'family-details' | 'visits' | 'deliveries' | 'settings';

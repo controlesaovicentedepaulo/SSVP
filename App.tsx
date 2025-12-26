@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database } from 'lucide-react';
+import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database, Settings } from 'lucide-react';
 import { AppView, Family, Visit, Delivery, Member, UserProfile } from './types';
 import { getDb, getUserProfile, loadDbForUser, saveUserProfile, setCurrentUserId, signOut, getSession } from './db';
 import { getSupabaseClient } from './supabase';
+import { getSettings } from './settings';
 import Dashboard from './components/Dashboard';
 import FamilyManager from './components/FamilyManager';
 import VisitManager from './components/VisitManager';
 import DeliveryManager from './components/DeliveryManager';
+import SettingsView from './components/SettingsView';
 import Auth from './components/Auth';
 import logoImage from './assets/Logo.jpg';
 
@@ -18,6 +20,8 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [data, setData] = useState(getDb());
   const [userProfile, setUserProfile] = useState<UserProfile>(getUserProfile());
+  const [settings, setSettings] = useState(getSettings());
+  const [settingsVersion, setSettingsVersion] = useState(0);
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -25,11 +29,15 @@ const App: React.FC = () => {
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const [editName, setEditName] = useState(userProfile.name);
+  const authUnsubscribeRef = useRef<null | (() => void)>(null);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-
     const init = async () => {
+      // Cleanup any previous subscription before re-initializing
+      authUnsubscribeRef.current?.();
+      authUnsubscribeRef.current = null;
+      setIsAuthLoading(true);
+
       const supabase = getSupabaseClient();
 
       if (supabase) {
@@ -68,11 +76,13 @@ const App: React.FC = () => {
           }
         });
 
-        unsubscribe = () => data.subscription.unsubscribe();
+        authUnsubscribeRef.current = () => data.subscription.unsubscribe();
       } else {
         const localSession = await getSession();
         if (localSession) {
           setSession(localSession);
+          // Para autenticação local, não há user.id, então não setamos currentUserId
+          // Isso é esperado - dados locais não precisam de sync com Supabase
           updateProfileFromSession(localSession);
         }
       }
@@ -83,9 +93,10 @@ const App: React.FC = () => {
     void init();
 
     return () => {
-      unsubscribe?.();
+      authUnsubscribeRef.current?.();
+      authUnsubscribeRef.current = null;
     };
-  }, []);
+  }, [settingsVersion]);
 
   const updateProfileFromSession = (session: any) => {
     const meta = session.user.user_metadata;
@@ -142,6 +153,7 @@ const App: React.FC = () => {
     { name: 'Famílias', view: 'families', icon: Users },
     { name: 'Visitas', view: 'visits', icon: Footprints },
     { name: 'Entregas', view: 'deliveries', icon: Package },
+    { name: 'Configurações', view: 'settings', icon: Settings },
   ];
 
   if (isAuthLoading) {
@@ -153,7 +165,10 @@ const App: React.FC = () => {
   }
 
   if (!session) {
-    return <Auth onSuccess={(newSession) => setSession(newSession)} />;
+    return <Auth onSuccess={(newSession) => {
+      setSession(newSession);
+      setCurrentUserId(newSession?.user?.id ?? null);
+    }} />;
   }
 
   const renderView = () => {
@@ -204,6 +219,16 @@ const App: React.FC = () => {
         return <VisitManager visits={data.visits} families={data.families} onRefresh={() => setData(getDb())} />;
       case 'deliveries':
         return <DeliveryManager deliveries={data.deliveries} families={data.families} onRefresh={() => setData(getDb())} />;
+      case 'settings':
+        return (
+          <SettingsView
+            settings={settings}
+            onUpdate={() => {
+              setSettings(getSettings());
+              setSettingsVersion(v => v + 1);
+            }}
+          />
+        );
       default:
         return <Dashboard data={data} onViewFamilies={() => setCurrentView('families')} onViewVisits={() => setCurrentView('visits')} onViewDeliveries={() => setCurrentView('deliveries')} />;
     }

@@ -32,6 +32,10 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
   const [outroMotivo, setOutroMotivo] = useState('');
   const [newFamilyStatus, setNewFamilyStatus] = useState<Family['status']>('Ativo');
 
+  // Necessidades identificadas
+  const [necessidades, setNecessidades] = useState<string[]>([]);
+  const [novaNecessidade, setNovaNecessidade] = useState('');
+
   // Estado para o Modal de Atualização de Cadastro
   const [isUpdatingFamily, setIsUpdatingFamily] = useState(false);
 
@@ -54,6 +58,9 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
         setMotivo('Outros');
         setOutroMotivo(editingVisit.motivo);
       }
+
+      setNecessidades(Array.isArray(editingVisit.necessidadesIdentificadas) ? editingVisit.necessidadesIdentificadas : []);
+      setNovaNecessidade('');
     } else if (selectedFamily) {
       // Quando selecionamos uma família, atualizamos o status baseado no que está no DB
       // Mas se o vicentino alterar no form, o estado newFamilyStatus prevalece
@@ -61,6 +68,9 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
       if (currentFam) {
         setNewFamilyStatus(currentFam.status);
       }
+      // Novo registro: limpa necessidades
+      setNecessidades([]);
+      setNovaNecessidade('');
     }
   }, [editingVisit, families, selectedFamily?.id]);
 
@@ -87,6 +97,8 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
     setSelectedFamily(null);
     setMotivo('');
     setOutroMotivo('');
+    setNecessidades([]);
+    setNovaNecessidade('');
   };
 
   const filteredFamilies = families.filter(f => 
@@ -203,7 +215,7 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
               vicentinos: (formData.get('vicentinos') as string).split(',').map(v => v.trim()),
               relato: formData.get('relato') as string,
               motivo: finalMotivo,
-              necessidadesIdentificadas: editingVisit ? editingVisit.necessidadesIdentificadas : []
+              necessidadesIdentificadas: necessidades
             };
             
             // Atualizar status da família se houver mudança
@@ -375,6 +387,58 @@ const VisitManager: React.FC<VisitManagerProps> = ({ visits, families, onRefresh
                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm leading-relaxed" 
                   placeholder="O que foi observado na visita sobre a situação da família, moradia, necessidades identificadas..."
                 ></textarea>
+              </div>
+
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase">Necessidades Identificadas</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={novaNecessidade}
+                    onChange={(e) => setNovaNecessidade(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const v = novaNecessidade.trim();
+                        if (!v) return;
+                        setNecessidades(prev => [...prev, v]);
+                        setNovaNecessidade('');
+                      }
+                    }}
+                    placeholder="Digite e pressione Enter..."
+                    className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = novaNecessidade.trim();
+                      if (!v) return;
+                      setNecessidades(prev => [...prev, v]);
+                      setNovaNecessidade('');
+                    }}
+                    className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 active:bg-emerald-800"
+                  >
+                    Adicionar
+                  </button>
+                </div>
+
+                {necessidades.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {necessidades.map((n, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-2 px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-bold">
+                        {n}
+                        <button
+                          type="button"
+                          onClick={() => setNecessidades(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-amber-900/70 hover:text-amber-900"
+                          aria-label="Remover necessidade"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-50">
