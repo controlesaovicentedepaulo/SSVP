@@ -68,10 +68,4 @@ export interface UserProfile {
   conference: string;
 }
 
-// Definição da interface AppSettings para configurações do banco de dados
-export interface AppSettings {
-  supabaseUrl: string;
-  supabaseKey: string;
-}
-
 export type AppView = 'dashboard' | 'families' | 'family-details' | 'visits' | 'deliveries' | 'settings';

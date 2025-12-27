@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
-import { ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Loader2, ShieldCheck, Database } from 'lucide-react';
 import { signIn } from '../db';
 import logoImage from '../assets/Logo.jpg';
+import { isSupabaseConfigured } from '../supabase';
 
 interface AuthProps {
   onSuccess: (session: any) => void;
@@ -14,6 +15,8 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  const supabaseOk = isSupabaseConfigured();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +54,21 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {!supabaseOk && (
+            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-bold animate-fade-in">
+              <div className="flex items-start gap-2">
+                <Database size={16} className="mt-0.5 shrink-0" />
+                <div className="space-y-2">
+                  <p>
+                    Supabase não configurado. Este app foi configurado para rodar <strong>somente com Supabase</strong>.
+                    Defina <span className="font-mono">VITE_SUPABASE_URL</span> e <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> e reinicie.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4" aria-disabled={!supabaseOk}>
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">E-mail</label>
               <input 
@@ -61,6 +78,7 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
                 onChange={(e) => setEmail(e.target.value)}
                 className="ssvp-input"
                 placeholder="vicentino@email.com"
+                disabled={!supabaseOk}
               />
             </div>
 
@@ -73,12 +91,13 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
                 onChange={(e) => setPassword(e.target.value)}
                 className="ssvp-input"
                 placeholder="••••••••"
+                disabled={!supabaseOk}
               />
             </div>
 
             <button 
               type="submit"
-              disabled={loading}
+              disabled={loading || !supabaseOk}
               className="w-full ssvp-btn-primary mt-6 disabled:opacity-50"
             >
               {loading ? (

@@ -52,6 +52,9 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
   const [membrosComorbidadeVisivel, setMembrosComorbidadeVisivel] = useState<{ [key: number]: boolean }>({});
   const [ocupacaoAssistidoValue, setOcupacaoAssistidoValue] = useState<string>('');
   const [ocupacoesMembros, setOcupacoesMembros] = useState<{ [key: number]: string }>({});
+  const [cpfValue, setCpfValue] = useState<string>('');
+  const [rgValue, setRgValue] = useState<string>('');
+  const [telefoneValue, setTelefoneValue] = useState<string>('');
 
   // Usar useMemo para criar uma string de dependência estável
   const familyKey = family ? `${family.id}-${family.ocupacao}-${family.renda}-${family.comorbidade}-${family.moradoresCount}` : '';
@@ -65,6 +68,11 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
       
       const ocupacaoValue = family.ocupacao || members[0]?.ocupacao || '';
       setOcupacaoAssistidoValue(ocupacaoValue);
+      
+      // Inicializar CPF, RG e Telefone formatados
+      setCpfValue(family.cpf || '');
+      setRgValue(family.rg || '');
+      setTelefoneValue(family.telefone || '');
       
       const rendaVis: { [key: number]: boolean } = {};
       const comoVis: { [key: number]: boolean } = {};
@@ -82,6 +90,9 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
     } else {
       setOcupacaoAssistidoValue('');
       setOcupacoesMembros({});
+      setCpfValue('');
+      setRgValue('');
+      setTelefoneValue('');
     }
   }, [isEditing, initialEdit, familyKey, membersKey]);
 
@@ -94,6 +105,80 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
       setNextFicha('1');
     }
   }, [isAdding, families]);
+
+  const formatCPF = (value: string): string => {
+    // Remove tudo que não é número
+    const numbers = value.replace(/\D/g, '');
+    
+    // Limita a 11 dígitos
+    const limited = numbers.slice(0, 11);
+    
+    // Aplica a máscara
+    if (limited.length <= 3) {
+      return limited;
+    } else if (limited.length <= 6) {
+      return `${limited.slice(0, 3)}.${limited.slice(3)}`;
+    } else if (limited.length <= 9) {
+      return `${limited.slice(0, 3)}.${limited.slice(3, 6)}.${limited.slice(6)}`;
+    } else {
+      return `${limited.slice(0, 3)}.${limited.slice(3, 6)}.${limited.slice(6, 9)}-${limited.slice(9, 11)}`;
+    }
+  };
+
+  const formatRG = (value: string): string => {
+    // Remove tudo que não é número ou X
+    const cleaned = value.replace(/[^\dXx]/g, '').toUpperCase();
+    
+    // Limita a 9 caracteres (8 dígitos + X no final, opcional)
+    const limited = cleaned.slice(0, 9);
+    
+    // Aplica a máscara: XX.XXX.XXX-X
+    if (limited.length <= 2) {
+      return limited;
+    } else if (limited.length <= 5) {
+      return `${limited.slice(0, 2)}.${limited.slice(2)}`;
+    } else if (limited.length <= 8) {
+      return `${limited.slice(0, 2)}.${limited.slice(2, 5)}.${limited.slice(5)}`;
+    } else {
+      return `${limited.slice(0, 2)}.${limited.slice(2, 5)}.${limited.slice(5, 8)}-${limited.slice(8)}`;
+    }
+  };
+
+  const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCPF(e.target.value);
+    setCpfValue(formatted);
+  };
+
+  const handleRgChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatRG(e.target.value);
+    setRgValue(formatted);
+  };
+
+  const formatPhone = (value: string): string => {
+    // Remove tudo que não é número
+    const numbers = value.replace(/\D/g, '');
+    
+    // Limita a 11 dígitos (celular) ou 10 dígitos (fixo)
+    const limited = numbers.slice(0, 11);
+    
+    // Aplica a máscara
+    if (limited.length <= 2) {
+      return limited.length > 0 ? `(${limited}` : limited;
+    } else if (limited.length <= 6) {
+      return `(${limited.slice(0, 2)}) ${limited.slice(2)}`;
+    } else if (limited.length <= 10) {
+      // Telefone fixo: (XX) XXXX-XXXX
+      return `(${limited.slice(0, 2)}) ${limited.slice(2, 6)}-${limited.slice(6)}`;
+    } else {
+      // Celular: (XX) XXXXX-XXXX
+      return `(${limited.slice(0, 2)}) ${limited.slice(2, 7)}-${limited.slice(7, 11)}`;
+    }
+  };
+
+  const handleTelefoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhone(e.target.value);
+    setTelefoneValue(formatted);
+  };
 
   const filteredFamilies = families.filter(f => 
     f.nomeAssistido.toLowerCase().includes(search.toLowerCase()) || 
@@ -673,11 +758,23 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">CPF (Opcional)</label>
-                <input name="cpf" defaultValue={isEditing ? targetFamily?.cpf : ''} placeholder="000.000.000-00" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input 
+                  name="cpf" 
+                  value={cpfValue} 
+                  onChange={handleCpfChange}
+                  placeholder="000.000.000-00" 
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">RG (Opcional)</label>
-                <input name="rg" defaultValue={isEditing ? targetFamily?.rg : ''} placeholder="0.000.000" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input 
+                  name="rg" 
+                  value={rgValue} 
+                  onChange={handleRgChange}
+                  placeholder="00.000.000-0" 
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">Ocupação Atual</label>
@@ -767,7 +864,13 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">Telefone / Celular</label>
-                <input name="telefone" defaultValue={isEditing ? targetFamily?.telefone : ''} placeholder="(00) 00000-0000" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input 
+                  name="telefone" 
+                  value={telefoneValue} 
+                  onChange={handleTelefoneChange}
+                  placeholder="(00) 00000-0000" 
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700">WhatsApp</label>
@@ -1160,14 +1263,18 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                   <Phone size={12} className="md:w-[14px] md:h-[14px] text-blue-500 shrink-0" /> 
                   <span className="truncate">{family.telefone || 'Sem Telefone'}</span>
                 </span>
-                <span className="flex items-center gap-1.5 text-xs md:text-sm text-slate-600 px-2 md:px-3 py-1 md:py-1.5 bg-slate-50 rounded-lg border border-slate-100">
-                  <MapPin size={12} className="md:w-[14px] md:h-[14px] text-red-500 shrink-0" /> 
-                  <span className="truncate">{family.bairro}</span>
-                </span>
+                {(family.bairro || family.endereco) && (
+                  <span className="flex items-start gap-1.5 text-xs md:text-sm text-slate-600 px-2 md:px-3 py-1 md:py-1.5 bg-slate-50 rounded-lg border border-slate-100">
+                    <MapPin size={12} className="md:w-[14px] md:h-[14px] text-red-500 shrink-0 mt-0.5" />
+                    <span className="break-words leading-relaxed">
+                      {[family.bairro, family.endereco].filter(Boolean).join(' - ')}
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
           </div>
-          <div className="flex items-start gap-2 flex-wrap">
+          <div className="flex items-start gap-2 flex-wrap justify-end md:justify-start">
             <button 
               onClick={generatePDF}
               className="bg-blue-600 text-white p-2.5 rounded-xl font-bold flex items-center justify-center hover:bg-blue-700 active:bg-blue-800 transition-all shadow-lg shadow-blue-100 shrink-0"

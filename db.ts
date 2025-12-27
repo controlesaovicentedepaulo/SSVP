@@ -2,11 +2,6 @@
 import { Delivery, Family, Member, UserProfile, Visit } from './types';
 import { getSupabaseClient } from './supabase';
 
-const STORAGE_KEY = 'ssvp_data_v1';
-const USER_KEY = 'ssvp_user_v1';
-const ACCOUNTS_KEY = 'ssvp_accounts_v1';
-const LOCAL_SESSION_KEY = 'ssvp_session';
-
 export interface DbSchema {
   families: Family[];
   members: Member[];
@@ -28,9 +23,12 @@ const INITIAL_USER: UserProfile = {
 };
 
 export const getDb = (): DbSchema => {
-  const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : INITIAL_DATA;
+  // Supabase-only: mantemos um cache em memória para o app funcionar reativo.
+  // Fonte de verdade é o Supabase (carregado via loadDbForUser / sincronizado via saveDb).
+  return JSON.parse(JSON.stringify(inMemoryDb)) as DbSchema;
 };
+
+let inMemoryDb: DbSchema = INITIAL_DATA;
 
 let currentUserId: string | null = null;
 export const setCurrentUserId = (userId: string | null) => {
@@ -55,10 +53,11 @@ const scheduleSync = (data: DbSchema) => {
   }
   const supabase = getSupabaseClient();
   if (!supabase) {
+    console.error('[SSVP][sync] Supabase não configurado. Este app exige Supabase.');
     return;
   }
   if (!currentUserId) {
-    console.warn('[SSVP][sync] ⚠️ currentUserId não definido - salvando apenas no localStorage. Faça login novamente para sincronizar com o Supabase.');
+    console.warn('[SSVP][sync] ⚠️ currentUserId não definido - aguardando autenticação para sincronizar.');
     return;
   }
 
@@ -76,17 +75,19 @@ const scheduleSync = (data: DbSchema) => {
 };
 
 export const saveDb = (data: DbSchema) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  inMemoryDb = data;
   scheduleSync(data);
 };
 
 export const getUserProfile = (): UserProfile => {
-  const data = localStorage.getItem(USER_KEY);
-  return data ? JSON.parse(data) : INITIAL_USER;
+  // Supabase-only: perfil vem do metadata do usuário (session.user.user_metadata).
+  // Mantemos um default para telas que ainda dependem desse shape.
+  return INITIAL_USER;
 };
 
 export const saveUserProfile = (profile: UserProfile) => {
-  localStorage.setItem(USER_KEY, JSON.stringify(profile));
+  // Supabase-only: não salva em localStorage. O App deve persistir via supabase.auth.updateUser.
+  void profile;
 };
 
 // CRUD Helpers (local + sync)
@@ -139,55 +140,15 @@ export const addDelivery = (delivery: Delivery) => {
   saveDb(db);
 };
 
-// =========================
-// Supabase: Auth (fallback local)
-// =========================
-const signInLocal = async (email: string, password: string) => {
-  const accountsStr = localStorage.getItem(ACCOUNTS_KEY);
-  const accounts = accountsStr ? JSON.parse(accountsStr) : [];
-
-  const user = accounts.find((a: any) => a.email === email && a.password === password);
-
-  if (user) {
-    const session = { user: { email: user.email, user_metadata: user.metadata } };
-    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(session));
-    return { data: { session }, error: null };
-  }
-
-  return { data: { session: null }, error: { message: 'E-mail ou senha incorretos.' } };
-};
-
-const signUpLocal = async (email: string, password: string, name: string, conference: string) => {
-  const accountsStr = localStorage.getItem(ACCOUNTS_KEY);
-  const accounts = accountsStr ? JSON.parse(accountsStr) : [];
-
-  if (accounts.some((a: any) => a.email === email)) {
-    return { data: null, error: { message: 'Este e-mail já está cadastrado localmente.' } };
-  }
-
-  const newUser = {
-    email,
-    password,
-    metadata: {
-      full_name: name,
-      conference: conference
-    }
-  };
-
-  accounts.push(newUser);
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-  return { data: { user: newUser }, error: null };
-};
-
 export const signIn = async (email: string, password: string) => {
   const supabase = getSupabaseClient();
-  if (!supabase) return signInLocal(email, password);
+  if (!supabase) return { data: { session: null }, error: { message: 'Supabase não configurado. Defina as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY.' } };
   return await supabase.auth.signInWithPassword({ email, password });
 };
 
 export const signUp = async (email: string, password: string, name: string, conference: string) => {
   const supabase = getSupabaseClient();
-  if (!supabase) return signUpLocal(email, password, name, conference);
+  if (!supabase) return { data: null, error: { message: 'Supabase não configurado. Defina as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY.' } };
   return await supabase.auth.signUp({
     email,
     password,
@@ -202,10 +163,7 @@ export const signUp = async (email: string, password: string, name: string, conf
 
 export const getSession = async () => {
   const supabase = getSupabaseClient();
-  if (!supabase) {
-    const session = localStorage.getItem(LOCAL_SESSION_KEY);
-    return session ? JSON.parse(session) : null;
-  }
+  if (!supabase) return null;
 
   const { data, error } = await supabase.auth.getSession();
   if (error) return null;
@@ -214,10 +172,7 @@ export const getSession = async () => {
 
 export const signOut = async () => {
   const supabase = getSupabaseClient();
-  if (!supabase) {
-    localStorage.removeItem(LOCAL_SESSION_KEY);
-    return;
-  }
+  if (!supabase) return;
   await supabase.auth.signOut();
 };
 
@@ -226,7 +181,7 @@ export const signOut = async () => {
 // =========================
 export const fetchDbFromSupabase = async (userId: string): Promise<DbSchema> => {
   const supabase = getSupabaseClient();
-  if (!supabase) return getDb();
+  if (!supabase) throw new Error('Supabase não configurado.');
 
   const [familiesRes, membersRes, visitsRes, deliveriesRes] = await Promise.all([
     supabase.from('families').select('*').eq('user_id', userId),
@@ -277,18 +232,18 @@ export const fetchDbFromSupabase = async (userId: string): Promise<DbSchema> => 
 
 export const loadDbForUser = async (userId: string | null): Promise<DbSchema> => {
   const supabase = getSupabaseClient();
-  if (!supabase || !userId) return getDb();
+  if (!supabase || !userId) throw new Error('Supabase não configurado ou usuário não autenticado.');
 
   const remote = await fetchDbFromSupabase(userId);
 
   suppressSync = true;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
+    inMemoryDb = remote;
   } finally {
     suppressSync = false;
   }
 
-  return remote;
+  return JSON.parse(JSON.stringify(remote)) as DbSchema;
 };
 
 export const syncDbToSupabase = async (db: DbSchema, userId: string) => {

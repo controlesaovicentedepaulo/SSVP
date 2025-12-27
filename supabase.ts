@@ -1,16 +1,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { getSettings } from './settings';
 
 type SupabaseConfig = { url: string; anonKey: string };
 
 const getSupabaseConfig = (): SupabaseConfig | null => {
-  const envUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
+  const envUrl = 'https://vswjzfwicjfxlgdthczw.supabase.co'
+  const envKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzd2p6ZndpY2pmeGxnZHRoY3p3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2MTE3NzksImV4cCI6MjA4MjE4Nzc3OX0.vv-UA0xMiAfo0yjFl-J9a_EMGX7BzNcafTIxX_aEjkk'
   if (envUrl && envKey) return { url: envUrl, anonKey: envKey };
-
-  const { supabaseUrl, supabaseKey } = getSettings();
-  if (supabaseUrl && supabaseKey) return { url: supabaseUrl, anonKey: supabaseKey };
 
   return null;
 };

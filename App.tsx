@@ -2,9 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database, Settings } from 'lucide-react';
 import { AppView, Family, Visit, Delivery, Member, UserProfile } from './types';
-import { getDb, getUserProfile, loadDbForUser, saveUserProfile, setCurrentUserId, signOut, getSession } from './db';
-import { getSupabaseClient } from './supabase';
-import { getSettings } from './settings';
+import { getDb, loadDbForUser, setCurrentUserId, signOut } from './db';
+import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 import Dashboard from './components/Dashboard';
 import FamilyManager from './components/FamilyManager';
 import VisitManager from './components/VisitManager';
@@ -19,9 +18,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [data, setData] = useState(getDb());
-  const [userProfile, setUserProfile] = useState<UserProfile>(getUserProfile());
-  const [settings, setSettings] = useState(getSettings());
-  const [settingsVersion, setSettingsVersion] = useState(0);
+  const [userProfile, setUserProfile] = useState<UserProfile>({ name: 'Vicentino', initials: 'V', conference: 'Conferência SSVP' });
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -39,6 +36,15 @@ const App: React.FC = () => {
       setIsAuthLoading(true);
 
       const supabase = getSupabaseClient();
+
+      if (!isSupabaseConfigured()) {
+        // App supabase-only: sem config, não inicia auth nem carrega dados
+        setSession(null);
+        setCurrentUserId(null);
+        setData(getDb());
+        setIsAuthLoading(false);
+        return;
+      }
 
       if (supabase) {
         const { data: sessionData } = await supabase.auth.getSession();
@@ -77,14 +83,6 @@ const App: React.FC = () => {
         });
 
         authUnsubscribeRef.current = () => data.subscription.unsubscribe();
-      } else {
-        const localSession = await getSession();
-        if (localSession) {
-          setSession(localSession);
-          // Para autenticação local, não há user.id, então não setamos currentUserId
-          // Isso é esperado - dados locais não precisam de sync com Supabase
-          updateProfileFromSession(localSession);
-        }
       }
 
       setIsAuthLoading(false);
@@ -96,7 +94,7 @@ const App: React.FC = () => {
       authUnsubscribeRef.current?.();
       authUnsubscribeRef.current = null;
     };
-  }, [settingsVersion]);
+  }, []);
 
   const updateProfileFromSession = (session: any) => {
     const meta = session.user.user_metadata;
@@ -106,7 +104,6 @@ const App: React.FC = () => {
       const initials = name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
       const newProfile = { name, conference, initials };
       setUserProfile(newProfile);
-      saveUserProfile(newProfile);
       setEditName(name);
     }
   };
@@ -134,7 +131,7 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const initials = editName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const newProfile = {
@@ -142,7 +139,22 @@ const App: React.FC = () => {
       conference: userProfile.conference, // Mantém a conferência existente
       initials: initials || 'V'
     };
-    saveUserProfile(newProfile);
+    try {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        const { error } = await supabase.auth.updateUser({
+          data: {
+            full_name: newProfile.name,
+            conference: newProfile.conference
+          }
+        });
+        if (error) {
+          console.warn('[SSVP] Erro ao atualizar perfil no Supabase:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('[SSVP] Erro inesperado ao atualizar perfil no Supabase:', err);
+    }
     setUserProfile(newProfile);
     setIsEditProfileModalOpen(false);
     setIsUserMenuOpen(false);
@@ -165,6 +177,36 @@ const App: React.FC = () => {
   }
 
   if (!session) {
+    if (!isSupabaseConfigured()) {
+      return (
+        <div className="min-h-screen w-full flex items-center justify-center bg-slate-50 p-4">
+          <div className="w-full max-w-xl bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200 overflow-hidden border border-slate-100 animate-fade-in">
+            <div className="p-8 md:p-10 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-50 text-amber-700 rounded-2xl border border-amber-100">
+                  <Database size={22} />
+                </div>
+                <div>
+                  <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">Configuração obrigatória</h1>
+                  <p className="text-sm text-slate-500 font-medium">Este app roda somente com Supabase.</p>
+                </div>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
+                <p className="text-sm text-slate-700 font-semibold">Defina as variáveis e reinicie:</p>
+                <div className="mt-3 space-y-2 text-xs font-mono text-slate-700">
+                  <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_URL=</div>
+                  <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_ANON_KEY=</div>
+                </div>
+              </div>
+              <div className="pt-2">
+                <SettingsView />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return <Auth onSuccess={(newSession) => {
       setSession(newSession);
       setCurrentUserId(newSession?.user?.id ?? null);
@@ -221,13 +263,7 @@ const App: React.FC = () => {
         return <DeliveryManager deliveries={data.deliveries} families={data.families} onRefresh={() => setData(getDb())} />;
       case 'settings':
         return (
-          <SettingsView
-            settings={settings}
-            onUpdate={() => {
-              setSettings(getSettings());
-              setSettingsVersion(v => v + 1);
-            }}
-          />
+          <SettingsView />
         );
       default:
         return <Dashboard data={data} onViewFamilies={() => setCurrentView('families')} onViewVisits={() => setCurrentView('visits')} onViewDeliveries={() => setCurrentView('deliveries')} />;

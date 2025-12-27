@@ -1,24 +1,9 @@
 
 import React, { useState } from 'react';
-import { Database, Save, HelpCircle, Copy, Check, Shield } from 'lucide-react';
-import { AppSettings } from '../types';
-import { saveSettings } from '../settings';
+import { Database, HelpCircle, Copy, Check } from 'lucide-react';
 
-interface SettingsViewProps {
-  settings: AppSettings;
-  onUpdate: () => void;
-}
-
-const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate }) => {
-  const [url, setUrl] = useState(settings.supabaseUrl || '');
-  const [key, setKey] = useState(settings.supabaseKey || '');
+const SettingsView: React.FC = () => {
   const [copied, setCopied] = useState(false);
-
-  const handleSave = () => {
-    saveSettings({ ...settings, supabaseUrl: url, supabaseKey: key });
-    onUpdate();
-    alert('Configurações do Supabase salvas com sucesso!');
-  };
 
   const sqlCode = `-- ==========================
 -- SSVP • Supabase (Auth + RLS)
@@ -195,44 +180,22 @@ WITH CHECK (auth.uid() = user_id);
           </div>
           <div>
             <h3 className="text-2xl font-bold text-slate-800">Conexão Supabase</h3>
-            <p className="text-sm text-slate-500">Substituindo planilhas por um banco de dados profissional.</p>
+            <p className="text-sm text-slate-500">Este app funciona <strong>somente com Supabase</strong> (sem salvar dados no navegador).</p>
           </div>
         </div>
 
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">URL do Projeto (API URL)</label>
-              <input 
-                type="text" 
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://abc.supabase.co"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-mono"
-              />
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
+            <p className="text-sm text-slate-700 font-semibold">
+              Configure as variáveis de ambiente no deploy (ou em <span className="font-mono">.env.local</span> no dev):
+            </p>
+            <div className="mt-3 space-y-2 text-xs font-mono text-slate-700">
+              <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_URL=</div>
+              <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_ANON_KEY=</div>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Chave Anônima (Anon Key)</label>
-              <input 
-                type="password" 
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-mono"
-              />
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-             <p className="text-xs text-slate-400 italic flex items-center gap-1">
-               <Shield size={12} /> Seus dados são salvos localmente e sincronizados com segurança.
-             </p>
-             <button 
-              onClick={handleSave}
-              className="flex items-center gap-2 bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-            >
-              <Save size={18} /> Salvar Configurações
-            </button>
+            <p className="mt-3 text-xs text-slate-500">
+              Depois de mudar as variáveis, reinicie o app.
+            </p>
           </div>
         </div>
       </section>
