@@ -665,13 +665,25 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                 const possuiComorbidade = formData.get(`member_possui_comorbidade_${i}`) === 'Sim';
                 // Usar o valor do estado controlado em vez do FormData
                 const ocupacaoMembro = ocupacoesMembros[i] || (formData.get(`member_ocupacao_${i}`) as string);
+                const nascimentoValue = formData.get(`member_nascimento_${i}`) as string;
+                // Calcular idade a partir da data de nascimento
+                let idadeCalculada = 0;
+                if (nascimentoValue) {
+                  const nascimentoDate = new Date(nascimentoValue);
+                  const hoje = new Date();
+                  idadeCalculada = hoje.getFullYear() - nascimentoDate.getFullYear();
+                  const mesDiff = hoje.getMonth() - nascimentoDate.getMonth();
+                  if (mesDiff < 0 || (mesDiff === 0 && hoje.getDate() < nascimentoDate.getDate())) {
+                    idadeCalculada--;
+                  }
+                }
                 formMembers.push({
                   id: isEditing && targetMembers[i] ? targetMembers[i].id : `${familyId}_m_${i}`,
                   familyId: familyId,
                   nome: nome,
-                  idade: Number(formData.get(`member_idade_${i}`)),
+                  idade: idadeCalculada,
                   parentesco: formData.get(`member_parentesco_${i}`) as string,
-                  nascimento: '',
+                  nascimento: nascimentoValue || '',
                   ocupacao: ocupacaoMembro || undefined,
                   observacaoOcupacao: (formData.get(`member_obs_ocupacao_${i}`) as string) || undefined,
                   renda: possuiRenda ? (formData.get(`member_renda_valor_${i}`) as string) : 'R$ 0,00',
@@ -935,8 +947,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                           </select>
                         </div>
                         <div className="md:col-span-1 space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">Idade</label>
-                          <input name={`member_idade_${idx}`} defaultValue={memberData?.idade || ''} type="number" required className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm" />
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Data de Nascimento</label>
+                          <input name={`member_nascimento_${idx}`} defaultValue={memberData?.nascimento || ''} type="date" required className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm" />
                         </div>
                         <div className="md:col-span-1 space-y-1">
                           <label className="text-[10px] font-bold text-slate-400 uppercase">Ocupação</label>
