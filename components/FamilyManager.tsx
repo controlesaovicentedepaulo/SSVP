@@ -215,6 +215,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
       <option value="Desempregado">Desempregado</option>
       <option value="Autônomo">Autônomo / Bico</option>
       <option value="Aposentado">Aposentado / Pensionista</option>
+      <option value="Do Lar">Do Lar</option>
     </>
   );
 
@@ -1406,6 +1407,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${
                           m.ocupacao === 'Empregado' ? 'bg-emerald-100 text-emerald-700' :
                           m.ocupacao === 'Estudante' ? 'bg-blue-100 text-blue-700' :
+                          m.ocupacao === 'Do Lar' ? 'bg-purple-100 text-purple-700' :
                           m.ocupacao === 'Desempregado' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-700'
                         }`}>
                           <Briefcase size={8} /> {m.ocupacao || 'N/A'}

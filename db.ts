@@ -49,14 +49,34 @@ const stripMeta = <T extends Record<string, any>>(row: T): Omit<T, 'user_id' | '
   return rest;
 };
 
-// Função auxiliar para adicionar timeout às promises
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs)
-    )
-  ]);
+// Função auxiliar para adicionar timeout às promises com retry
+const withRetry = async <T>(
+  promiseFn: () => Promise<T>, 
+  timeoutMs: number, 
+  maxRetries = 2
+): Promise<T> => {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await Promise.race([
+        promiseFn(),
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs)
+        )
+      ]);
+    } catch (err: any) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.min(1000 * Math.pow(2, attempt), 5000); // Backoff: 1s, 2s, max 5s
+      console.warn(`[SSVP][sync] ⚠️ Tentativa ${attempt + 1}/${maxRetries + 1} falhou, tentando novamente em ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error('Todas as tentativas falharam');
+};
+
+// Calcular timeout baseado no número de registros
+const calculateTimeout = (recordCount: number): number => {
+  // Base: 15s, +2s para cada 10 registros, máximo 120s (2 minutos)
+  return Math.min(15000 + (Math.ceil(recordCount / 10) * 2000), 120000);
 };
 
 const cloneDb = (data: DbSchema): DbSchema => {
@@ -304,58 +324,47 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
     try {
       console.log(`[SSVP][sync] 📤 Sincronizando ${table}... (${rows.length} registro(s))`);
       
-      const ids = rows.map(r => r.id).filter(Boolean) as string[];
+      const BATCH_SIZE = 20; // Processar em batches de 20 registros
+      
+      if (rows.length === 0) {
+        // Se não há registros localmente, não faz nada (mantém o que está no Supabase)
+        console.log(`[SSVP][sync] ⏭️ ${table} vazio localmente, pulando sincronização`);
+        return;
+      }
 
-      if (ids.length === 0) {
-        const deleteQuery = supabase.from(table).delete().eq('user_id', userId);
-        const deleteResult = await withTimeout(deleteQuery as unknown as Promise<{ error: any }>, 10000);
-        const { error } = deleteResult;
-        if (error && error.code !== 'PGRST116' && error.code !== '42P01') {
-          console.warn(`[SSVP][sync] ⚠️ Erro ao deletar de ${table}:`, error.message);
-        } else {
-          console.log(`[SSVP][sync] ✅ ${table} limpo (sem registros)`);
-        }
-      } else {
-        const deleteQuery = supabase.from(table).delete().eq('user_id', userId).not('id', 'in', toInFilter(ids));
-        const deleteResult = await withTimeout(deleteQuery as unknown as Promise<{ error: any }>, 10000);
-        const { error: deleteError } = deleteResult;
-        if (deleteError && deleteError.code !== 'PGRST116' && deleteError.code !== '42P01') {
-          console.warn(`[SSVP][sync] ⚠️ Erro ao limpar ${table}:`, deleteError.message);
+      // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
+      const payload = rows.map(r => {
+        const clean: any = { ...r, user_id: userId };
+        Object.keys(clean).forEach(key => {
+          // Remove undefined e strings vazias (exceto campos obrigatórios)
+          if (clean[key] === undefined || (typeof clean[key] === 'string' && clean[key].trim() === '' && key !== 'id' && key !== 'user_id')) {
+            delete clean[key];
+          }
+        });
+        return clean;
+      });
+
+      // Debug leve (sem PII): confirma campos enviados
+      if (table === 'families' && payload.length > 0) {
+        const sample = payload[0];
+        if (sample) {
+          console.info('[SSVP][sync] families payload keys:', Object.keys(sample).sort());
+          console.info('[SSVP][sync] families sample flags:', {
+            has_ocupacao: Object.prototype.hasOwnProperty.call(sample, 'ocupacao'),
+            has_observacaoOcupacao: Object.prototype.hasOwnProperty.call(sample, 'observacaoOcupacao'),
+            id: sample.id
+          });
         }
       }
 
-      if (rows.length > 0) {
-        // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
-        const payload = rows.map(r => {
-          const clean: any = { ...r, user_id: userId };
-          Object.keys(clean).forEach(key => {
-            // Remove undefined e strings vazias (exceto campos obrigatórios)
-            if (clean[key] === undefined || (typeof clean[key] === 'string' && clean[key].trim() === '' && key !== 'id' && key !== 'user_id')) {
-              delete clean[key];
-            }
-          });
-          return clean;
-        });
-
-        // Debug leve (sem PII): confirma campos enviados
-        if (table === 'families') {
-          const sample = payload[0];
-          if (sample) {
-            console.info('[SSVP][sync] families payload keys:', Object.keys(sample).sort());
-            console.info('[SSVP][sync] families sample flags:', {
-              has_ocupacao: Object.prototype.hasOwnProperty.call(sample, 'ocupacao'),
-              has_observacaoOcupacao: Object.prototype.hasOwnProperty.call(sample, 'observacaoOcupacao'),
-              id: sample.id
-            });
-          }
-        }
-
-        const upsertQuery = supabase.from(table).upsert(payload, { onConflict: 'id' });
-        const upsertResult = await withTimeout(upsertQuery as unknown as Promise<{ error: any; data: any }>, 15000);
-        const { error, data } = upsertResult;
+      if (payload.length <= BATCH_SIZE) {
+        // Batch único para poucos registros
+        const timeout = calculateTimeout(payload.length);
+        const upsertQuery = () => supabase.from(table).upsert(payload, { onConflict: 'id' }) as unknown as Promise<{ error: any; data: any }>;
+        const upsertResult = await withRetry(upsertQuery, timeout);
+        const { error, data } = upsertResult as { error: any; data: any };
         
         if (error) {
-          // Se a tabela não existe (404/PGRST116), apenas loga e continua
           if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
             console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
           } else {
@@ -365,17 +374,53 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
               details: error.details,
               hint: error.hint
             });
+            throw error;
           }
         } else {
           console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
         }
+      } else {
+        // Processar em batches para muitos registros
+        console.log(`[SSVP][sync] 📦 Processando ${payload.length} registros em batches de ${BATCH_SIZE}...`);
+        let successCount = 0;
+        
+        for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+          const batch = payload.slice(i, i + BATCH_SIZE);
+          const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(payload.length / BATCH_SIZE);
+          
+          try {
+            const timeout = calculateTimeout(batch.length);
+            const upsertQuery = () => supabase.from(table).upsert(batch, { onConflict: 'id' }) as unknown as Promise<{ error: any; data: any }>;
+            const upsertResult = await withRetry(upsertQuery, timeout);
+            const { error, data } = upsertResult as { error: any; data: any };
+            
+            if (error) {
+              if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
+                console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada no batch ${batchNum}/${totalBatches}.`);
+              } else {
+                console.error(`[SSVP][sync] ❌ Erro no batch ${batchNum}/${totalBatches} de ${table}:`, error.message);
+                throw error;
+              }
+            } else {
+              successCount += batch.length;
+              console.log(`[SSVP][sync] ✅ Batch ${batchNum}/${totalBatches} de ${table} sincronizado (${batch.length} registro(s))`);
+            }
+          } catch (err: any) {
+            console.error(`[SSVP][sync] ❌ Falha no batch ${batchNum}/${totalBatches} de ${table} após retries:`, err?.message || err);
+            throw err;
+          }
+        }
+        
+        console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${successCount}/${payload.length} registro(s))`);
       }
     } catch (err: any) {
       if (err.message?.includes('Timeout')) {
-        console.error(`[SSVP][sync] ❌ Timeout ao sincronizar ${table} (requisição demorou mais de 15s)`);
+        console.error(`[SSVP][sync] ❌ Timeout ao sincronizar ${table} após todas as tentativas`);
       } else {
         console.error(`[SSVP][sync] ❌ Erro ao sincronizar ${table}:`, err?.message || err);
       }
+      throw err; // Re-throw para que a sincronização geral saiba que falhou
     }
   };
 
