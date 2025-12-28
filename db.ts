@@ -64,9 +64,27 @@ const withRetry = async <T>(
         )
       ]);
     } catch (err: any) {
+      // Loga o erro real antes de tentar novamente
+      const errorType = err.message?.includes('Timeout') ? 'timeout' : 'outro erro';
+      const errorInfo = err.error || err;
+      
+      console.warn(`[SSVP][sync] ⚠️ Tentativa ${attempt + 1}/${maxRetries + 1} falhou (${errorType}):`, {
+        message: errorInfo?.message || err.message || err,
+        code: errorInfo?.code || err.code,
+        details: errorInfo?.details || err.details,
+        hint: errorInfo?.hint || err.hint
+      });
+      
       if (attempt === maxRetries) throw err;
+      
+      // Não faz retry para erros que não são timeout (validação, FK, etc)
+      if (!err.message?.includes('Timeout')) {
+        console.error(`[SSVP][sync] ❌ Erro não é timeout, parando retries.`);
+        throw err;
+      }
+      
       const delay = Math.min(1000 * Math.pow(2, attempt), 5000); // Backoff: 1s, 2s, max 5s
-      console.warn(`[SSVP][sync] ⚠️ Tentativa ${attempt + 1}/${maxRetries + 1} falhou, tentando novamente em ${delay}ms...`);
+      console.warn(`[SSVP][sync] ⚠️ Tentando novamente em ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -326,11 +344,11 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
       
       const BATCH_SIZE = 20; // Processar em batches de 20 registros
       
-      if (rows.length === 0) {
-        // Se não há registros localmente, não faz nada (mantém o que está no Supabase)
-        console.log(`[SSVP][sync] ⏭️ ${table} vazio localmente, pulando sincronização`);
-        return;
-      }
+      // IDs locais que devem existir no Supabase
+      const localIds = rows.map(r => r.id).filter(Boolean) as string[];
+      
+      // Passo 1: Upsert dos dados locais (se houver)
+      if (rows.length > 0) {
 
       // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
       const payload = rows.map(r => {
@@ -360,24 +378,35 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
       if (payload.length <= BATCH_SIZE) {
         // Batch único para poucos registros
         const timeout = calculateTimeout(payload.length);
-        const upsertQuery = () => supabase.from(table).upsert(payload, { onConflict: 'id' }) as unknown as Promise<{ error: any; data: any }>;
-        const upsertResult = await withRetry(upsertQuery, timeout);
-        const { error, data } = upsertResult as { error: any; data: any };
+        const upsertQuery = () => {
+          const query = supabase.from(table).upsert(payload, { onConflict: 'id' });
+          return query as unknown as Promise<{ error: any; data: any }>;
+        };
         
-        if (error) {
-          if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
-            console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
-          } else {
-            console.error(`[SSVP][sync] ❌ Erro ao sincronizar ${table}:`, {
+        try {
+          const upsertResult = await withRetry(upsertQuery, timeout);
+          const { error, data } = upsertResult;
+          
+          if (error) {
+            console.error(`[SSVP][sync] ❌ Erro do Supabase ao sincronizar ${table}:`, {
               message: error.message,
               code: error.code,
               details: error.details,
               hint: error.hint
             });
-            throw error;
+            
+            if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
+              console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
+              return; // Não throw, apenas retorna
+            } else {
+              throw error; // Re-throw para ser capturado pelo try/catch externo
+            }
+          } else {
+            console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
           }
-        } else {
-          console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
+        } catch (err: any) {
+          // Erro já foi logado pelo withRetry
+          throw err;
         }
       } else {
         // Processar em batches para muitos registros
@@ -391,15 +420,26 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
           
           try {
             const timeout = calculateTimeout(batch.length);
-            const upsertQuery = () => supabase.from(table).upsert(batch, { onConflict: 'id' }) as unknown as Promise<{ error: any; data: any }>;
+            const upsertQuery = () => {
+              const query = supabase.from(table).upsert(batch, { onConflict: 'id' });
+              return query as unknown as Promise<{ error: any; data: any }>;
+            };
+            
             const upsertResult = await withRetry(upsertQuery, timeout);
-            const { error, data } = upsertResult as { error: any; data: any };
+            const { error, data } = upsertResult;
             
             if (error) {
+              console.error(`[SSVP][sync] ❌ Erro do Supabase no batch ${batchNum}/${totalBatches} de ${table}:`, {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                hint: error.hint
+              });
+              
               if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
                 console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada no batch ${batchNum}/${totalBatches}.`);
+                continue; // Pula este batch e continua com os próximos
               } else {
-                console.error(`[SSVP][sync] ❌ Erro no batch ${batchNum}/${totalBatches} de ${table}:`, error.message);
                 throw error;
               }
             } else {
@@ -407,13 +447,78 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
               console.log(`[SSVP][sync] ✅ Batch ${batchNum}/${totalBatches} de ${table} sincronizado (${batch.length} registro(s))`);
             }
           } catch (err: any) {
-            console.error(`[SSVP][sync] ❌ Falha no batch ${batchNum}/${totalBatches} de ${table} após retries:`, err?.message || err);
+            // Erro já foi logado pelo withRetry
+            console.error(`[SSVP][sync] ❌ Falha no batch ${batchNum}/${totalBatches} de ${table} após todas as tentativas:`, err?.message || err);
             throw err;
           }
         }
         
         console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${successCount}/${payload.length} registro(s))`);
       }
+      }
+      
+      // Passo 2: Remover do Supabase os registros que foram deletados localmente
+      try {
+        // Buscar todos os IDs que existem no Supabase para este usuário
+        const { data: existingRecords, error: fetchError } = await supabase
+          .from(table)
+          .select('id')
+          .eq('user_id', userId);
+        
+        if (fetchError && fetchError.code !== 'PGRST116' && fetchError.code !== '42P01') {
+          console.warn(`[SSVP][sync] ⚠️ Não foi possível buscar registros existentes de ${table} para limpeza:`, fetchError.message);
+        } else if (existingRecords && existingRecords.length > 0) {
+          // IDs que estão no Supabase mas não estão mais localmente
+          const existingIds = existingRecords.map((r: any) => r.id).filter(Boolean) as string[];
+          const idsToDelete = existingIds.filter(id => !localIds.includes(id));
+          
+          if (idsToDelete.length > 0) {
+            console.log(`[SSVP][sync] 🗑️ Removendo ${idsToDelete.length} registro(s) deletado(s) de ${table}...`);
+            
+            // Deletar em batches para não sobrecarregar
+            for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+              const batchToDelete = idsToDelete.slice(i, i + BATCH_SIZE);
+              const timeout = calculateTimeout(batchToDelete.length);
+              const deleteQuery = () => {
+                const query = supabase.from(table).delete().eq('user_id', userId).in('id', batchToDelete);
+                return query as unknown as Promise<{ error: any; data: any }>;
+              };
+              
+              const deleteResult = await withRetry(deleteQuery, timeout);
+              if (deleteResult.error) {
+                console.warn(`[SSVP][sync] ⚠️ Erro ao deletar registros de ${table}:`, deleteResult.error.message);
+              } else {
+                console.log(`[SSVP][sync] ✅ ${batchToDelete.length} registro(s) removido(s) de ${table}`);
+              }
+            }
+          }
+        }
+      } catch (deleteErr: any) {
+        // Não quebra a sync se falhar ao deletar, apenas loga
+        console.warn(`[SSVP][sync] ⚠️ Erro ao limpar registros deletados de ${table}:`, deleteErr?.message || deleteErr);
+      }
+      
+      // Se não há registros localmente, deleta todos do Supabase para este usuário
+      if (rows.length === 0) {
+        try {
+          console.log(`[SSVP][sync] 🗑️ ${table} vazio localmente, removendo todos os registros do Supabase...`);
+          const timeout = calculateTimeout(1);
+          const deleteAllQuery = () => {
+            const query = supabase.from(table).delete().eq('user_id', userId);
+            return query as unknown as Promise<{ error: any; data: any }>;
+          };
+          
+          const deleteAllResult = await withRetry(deleteAllQuery, timeout);
+          if (deleteAllResult.error && deleteAllResult.error.code !== 'PGRST116' && deleteAllResult.error.code !== '42P01') {
+            console.warn(`[SSVP][sync] ⚠️ Erro ao limpar ${table}:`, deleteAllResult.error.message);
+          } else {
+            console.log(`[SSVP][sync] ✅ Todos os registros de ${table} removidos do Supabase`);
+          }
+        } catch (deleteAllErr: any) {
+          console.warn(`[SSVP][sync] ⚠️ Erro ao limpar ${table}:`, deleteAllErr?.message || deleteAllErr);
+        }
+      }
+      
     } catch (err: any) {
       if (err.message?.includes('Timeout')) {
         console.error(`[SSVP][sync] ❌ Timeout ao sincronizar ${table} após todas as tentativas`);

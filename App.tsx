@@ -108,6 +108,31 @@ const App: React.FC = () => {
     }
   };
 
+  const refreshDataFromSupabase = async () => {
+    // Sempre atualiza do cache local primeiro (dados já estão atualizados após saveDb)
+    // Isso garante que mudanças locais apareçam imediatamente
+    // Usamos uma função para garantir que o React detecte a mudança
+    const freshData = getDb();
+    setData(prevData => {
+      // Força uma nova referência para garantir que o React detecte a mudança
+      return JSON.parse(JSON.stringify(freshData)) as typeof prevData;
+    });
+    
+    // Depois sincroniza em background (sem bloquear a UI)
+    if (session?.user?.id) {
+      // A sync já está agendada pelo saveDb, mas se necessário, podemos forçar um refresh do Supabase
+      // Deixamos isso rodar em background para não bloquear a UI
+      loadDbForUser(session.user.id).then(loaded => {
+        // Atualiza com os dados do Supabase (pode ter dados mais recentes de outros dispositivos)
+        setData(prevData => JSON.parse(JSON.stringify(loaded)) as typeof prevData);
+        console.log('[SSVP] ✅ Dados sincronizados do Supabase em background');
+      }).catch(err => {
+        console.warn('[SSVP] ⚠️ Erro ao sincronizar do Supabase em background:', err);
+        // Mantém os dados locais em caso de erro
+      });
+    }
+  };
+
   const handleLogout = () => {
     setIsUserMenuOpen(false);
     setIsLogoutConfirmModalOpen(true);
@@ -228,12 +253,13 @@ const App: React.FC = () => {
       case 'families':
         return (
           <FamilyManager 
+            key={`families-${data.families.length}-${data.families.map(f => f.id).join('-')}`}
             families={data.families} 
             onViewDetails={(id) => {
               setSelectedFamilyId(id);
               setCurrentView('family-details');
             }}
-            onRefresh={() => setData(getDb())}
+            onRefresh={refreshDataFromSupabase}
           />
         );
       case 'family-details':
@@ -253,15 +279,15 @@ const App: React.FC = () => {
               members={data.members.filter(m => m.familyId === family.id)}
               visits={data.visits.filter(v => v.familyId === family.id)}
               deliveries={data.deliveries.filter(d => d.familyId === family.id)}
-              onRefresh={() => setData(getDb())}
+              onRefresh={refreshDataFromSupabase}
               onDelete={() => setCurrentView('families')}
             />
           </div>
         );
       case 'visits':
-        return <VisitManager visits={data.visits} families={data.families} onRefresh={() => setData(getDb())} />;
+        return <VisitManager visits={data.visits} families={data.families} onRefresh={refreshDataFromSupabase} />;
       case 'deliveries':
-        return <DeliveryManager deliveries={data.deliveries} families={data.families} onRefresh={() => setData(getDb())} />;
+        return <DeliveryManager deliveries={data.deliveries} families={data.families} onRefresh={refreshDataFromSupabase} />;
       default:
         return <Dashboard data={data} onViewFamilies={() => setCurrentView('families')} onViewVisits={() => setCurrentView('visits')} onViewDeliveries={() => setCurrentView('deliveries')} />;
     }

@@ -13,6 +13,12 @@ export default {
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
       },
+      colors: {
+        ssvp: {
+          blue: '#1e40af',
+          light: '#eff6ff',
+        }
+      },
       animation: {
         'fade-in': 'fadeIn 0.4s ease-out forwards',
       },
