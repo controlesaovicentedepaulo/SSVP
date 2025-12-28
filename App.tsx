@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database } from 'lucide-react';
 import { AppView, Family, Visit, Delivery, Member, UserProfile } from './types';
 import { getDb, loadDbForUser, setCurrentUserId, signOut } from './db';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
@@ -8,7 +8,6 @@ import Dashboard from './components/Dashboard';
 import FamilyManager from './components/FamilyManager';
 import VisitManager from './components/VisitManager';
 import DeliveryManager from './components/DeliveryManager';
-import SettingsView from './components/SettingsView';
 import Auth from './components/Auth';
 import logoImage from './assets/Logo.jpg';
 
@@ -23,6 +22,7 @@ const App: React.FC = () => {
   
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
+  const [isLogoutConfirmModalOpen, setIsLogoutConfirmModalOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const [editName, setEditName] = useState(userProfile.name);
@@ -108,11 +108,16 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    setIsUserMenuOpen(false);
+    setIsLogoutConfirmModalOpen(true);
+  };
+
+  const confirmLogout = async () => {
+    setIsLogoutConfirmModalOpen(false);
     await signOut();
     setSession(null);
     setCurrentUserId(null);
-    setIsUserMenuOpen(false);
   };
 
   useEffect(() => {
@@ -165,7 +170,6 @@ const App: React.FC = () => {
     { name: 'Famílias', view: 'families', icon: Users },
     { name: 'Visitas', view: 'visits', icon: Footprints },
     { name: 'Entregas', view: 'deliveries', icon: Package },
-    { name: 'Configurações', view: 'settings', icon: Settings },
   ];
 
   if (isAuthLoading) {
@@ -197,9 +201,6 @@ const App: React.FC = () => {
                   <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_URL=</div>
                   <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">VITE_SUPABASE_ANON_KEY=</div>
                 </div>
-              </div>
-              <div className="pt-2">
-                <SettingsView />
               </div>
             </div>
           </div>
@@ -261,10 +262,6 @@ const App: React.FC = () => {
         return <VisitManager visits={data.visits} families={data.families} onRefresh={() => setData(getDb())} />;
       case 'deliveries':
         return <DeliveryManager deliveries={data.deliveries} families={data.families} onRefresh={() => setData(getDb())} />;
-      case 'settings':
-        return (
-          <SettingsView />
-        );
       default:
         return <Dashboard data={data} onViewFamilies={() => setCurrentView('families')} onViewVisits={() => setCurrentView('visits')} onViewDeliveries={() => setCurrentView('deliveries')} />;
     }
@@ -272,6 +269,39 @@ const App: React.FC = () => {
 
   return (
     <div className="h-full w-full flex bg-slate-50 overflow-hidden">
+      {/* Modal Confirmação Logout */}
+      {isLogoutConfirmModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 glass-overlay">
+          <div className="bg-white w-full max-w-md rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6 md:p-8 space-y-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl">
+                  <LogOut size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-800">Confirmar Saída</h3>
+                  <p className="text-sm text-slate-500">Tem certeza que deseja sair da sua conta?</p>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  onClick={() => setIsLogoutConfirmModalOpen(false)} 
+                  className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 rounded-xl text-sm font-bold active:bg-slate-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmLogout} 
+                  className="flex-1 bg-rose-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-rose-100 flex items-center justify-center gap-2 py-3 active:bg-rose-700 transition-colors"
+                >
+                  <LogOut size={18} /> Sim, Sair
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Perfil */}
       {isEditProfileModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 glass-overlay">

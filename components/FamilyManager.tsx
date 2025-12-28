@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, ChevronRight, Phone, MapPin, Calendar, User, FileText, Activity, Home, Heart, Trash2, Edit, Info, Users, Footprints, Package, Search, X, CreditCard, ShieldCheck, UserPlus, Briefcase, DollarSign, Activity as HealthIcon, Save, UserCheck, AlertTriangle, Download } from 'lucide-react';
 import { Family, Member, Visit, Delivery } from '../types';
 import { addFamily, updateFamily, deleteFamily, saveDb, getDb } from '../db';
@@ -55,6 +55,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
   const [cpfValue, setCpfValue] = useState<string>('');
   const [rgValue, setRgValue] = useState<string>('');
   const [telefoneValue, setTelefoneValue] = useState<string>('');
+  const formRef = useRef<HTMLFormElement>(null);
 
   // Usar useMemo para criar uma string de dependência estável
   const familyKey = family ? `${family.id}-${family.ocupacao}-${family.renda}-${family.comorbidade}-${family.moradoresCount}` : '';
@@ -178,6 +179,26 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
   const handleTelefoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatPhone(e.target.value);
     setTelefoneValue(formatted);
+  };
+
+  // Função para resetar completamente o formulário
+  const resetForm = () => {
+    // Resetar estados
+    setCpfValue('');
+    setRgValue('');
+    setTelefoneValue('');
+    setOcupacaoAssistidoValue('');
+    setOcupacoesMembros({});
+    setTemRendaAssistido(false);
+    setTemComorbidadeAssistido(false);
+    setMembrosRendaVisivel({});
+    setMembrosComorbidadeVisivel({});
+    setTotalMoradores(1);
+    
+    // Resetar o formulário HTML
+    if (formRef.current) {
+      formRef.current.reset();
+    }
   };
 
   const filteredFamilies = families.filter(f => 
@@ -630,12 +651,12 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
             <h3 className="text-2xl font-bold text-slate-800">{isEditing ? 'Editar Cadastro' : 'Novo Cadastro SSVP'}</h3>
             <p className="text-slate-500 text-sm">Atualize os dados socioeconômicos da família e de seus membros.</p>
           </div>
-          <button onClick={() => { setIsAdding(false); setIsEditing(false); onCancelEdit?.(); }} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors">
+          <button onClick={() => { setIsAdding(false); setIsEditing(false); resetForm(); onCancelEdit?.(); }} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors">
             <X size={24} />
           </button>
         </div>
         
-        <form className="space-y-10" onSubmit={(e) => {
+        <form ref={formRef} className="space-y-10" onSubmit={(e) => {
           e.preventDefault();
           const formData = new FormData(e.currentTarget);
           const familyId = isEditing ? (family?.id || crypto.randomUUID()) : crypto.randomUUID();
@@ -733,6 +754,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
           saveDb(db);
           setIsAdding(false);
           setIsEditing(false);
+          resetForm(); // Resetar formulário após salvar
           onRefresh();
           onCancelEdit?.();
         }}>
@@ -1034,7 +1056,7 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({
           </div>
 
           <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
-            <button type="button" onClick={() => { setIsAdding(false); setIsEditing(false); onCancelEdit?.(); }} className="px-6 py-2.5 rounded-xl text-slate-600 font-semibold hover:bg-slate-100 transition-colors">Cancelar</button>
+            <button type="button" onClick={() => { setIsAdding(false); setIsEditing(false); resetForm(); onCancelEdit?.(); }} className="px-6 py-2.5 rounded-xl text-slate-600 font-semibold hover:bg-slate-100 transition-colors">Cancelar</button>
             <button type="submit" className={`px-8 py-2.5 rounded-xl text-white font-bold shadow-lg transition-all flex items-center gap-2 ${isEditing ? 'bg-emerald-600 shadow-emerald-200 hover:bg-emerald-700' : 'bg-blue-600 shadow-blue-200 hover:bg-blue-700'}`}>
               {isEditing ? <Save size={18} /> : <UserPlus size={18} />} 
               {isEditing ? 'Salvar Alterações' : 'Finalizar Cadastro'}

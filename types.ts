@@ -68,4 +68,4 @@ export interface UserProfile {
   conference: string;
 }
 
-export type AppView = 'dashboard' | 'families' | 'family-details' | 'visits' | 'deliveries' | 'settings';
+export type AppView = 'dashboard' | 'families' | 'family-details' | 'visits' | 'deliveries';

@@ -38,6 +38,8 @@ export const setCurrentUserId = (userId: string | null) => {
 let suppressSync = false;
 let syncTimer: number | null = null;
 let pendingDb: DbSchema | null = null;
+let syncInFlight: Promise<void> | null = null;
+let queuedDb: DbSchema | null = null;
 
 const escapeForInFilter = (value: string) => value.replaceAll("'", "''");
 const toInFilter = (values: string[]) => `(${values.map(v => `'${escapeForInFilter(v)}'`).join(',')})`;
@@ -45,6 +47,51 @@ const toInFilter = (values: string[]) => `(${values.map(v => `'${escapeForInFilt
 const stripMeta = <T extends Record<string, any>>(row: T): Omit<T, 'user_id' | 'created_at' | 'updated_at'> => {
   const { user_id, created_at, updated_at, ...rest } = row as any;
   return rest;
+};
+
+// Função auxiliar para adicionar timeout às promises
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+};
+
+const cloneDb = (data: DbSchema): DbSchema => {
+  // Evita mutação do snapshot enquanto o sync está rodando
+  try {
+    const sc = (globalThis as any).structuredClone as undefined | ((v: any) => any);
+    if (typeof sc === 'function') return sc(data) as DbSchema;
+  } catch {
+    // fallback abaixo
+  }
+  return JSON.parse(JSON.stringify(data)) as DbSchema;
+};
+
+const requestSync = async (snapshot: DbSchema, userId: string) => {
+  // Garante que só existe 1 sync por vez. Se chegar outro snapshot, guardamos o último e rodamos ao final.
+  if (syncInFlight) {
+    queuedDb = snapshot;
+    return;
+  }
+
+  syncInFlight = (async () => {
+    await syncDbToSupabase(snapshot, userId);
+  })();
+
+  try {
+    await syncInFlight;
+  } finally {
+    syncInFlight = null;
+    if (queuedDb) {
+      const next = queuedDb;
+      queuedDb = null;
+      // roda o último snapshot pendente
+      await requestSync(next, userId);
+    }
+  }
 };
 
 const scheduleSync = (data: DbSchema) => {
@@ -61,7 +108,7 @@ const scheduleSync = (data: DbSchema) => {
     return;
   }
 
-  pendingDb = data;
+  pendingDb = cloneDb(data);
   if (syncTimer) window.clearTimeout(syncTimer);
 
   syncTimer = window.setTimeout(() => {
@@ -70,7 +117,7 @@ const scheduleSync = (data: DbSchema) => {
     syncTimer = null;
     if (!snapshot || !currentUserId) return;
     console.log('[SSVP][sync] Iniciando sincronização com Supabase...');
-    void syncDbToSupabase(snapshot, currentUserId);
+    void requestSync(snapshot, currentUserId);
   }, 700);
 };
 
@@ -248,75 +295,95 @@ export const loadDbForUser = async (userId: string | null): Promise<DbSchema> =>
 
 export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
   const supabase = getSupabaseClient();
-  if (!supabase) return;
+  if (!supabase) {
+    console.warn('[SSVP][sync] ❌ Supabase não configurado.');
+    return;
+  }
 
   const syncTable = async (table: 'families' | 'members' | 'visits' | 'deliveries', rows: any[]) => {
     try {
+      console.log(`[SSVP][sync] 📤 Sincronizando ${table}... (${rows.length} registro(s))`);
+      
       const ids = rows.map(r => r.id).filter(Boolean) as string[];
 
       if (ids.length === 0) {
-        const { error } = await supabase.from(table).delete().eq('user_id', userId);
+        const deleteQuery = supabase.from(table).delete().eq('user_id', userId);
+        const deleteResult = await withTimeout(deleteQuery as unknown as Promise<{ error: any }>, 10000);
+        const { error } = deleteResult;
         if (error && error.code !== 'PGRST116' && error.code !== '42P01') {
-          console.warn(`[SSVP] Erro ao deletar de ${table}:`, error.message);
+          console.warn(`[SSVP][sync] ⚠️ Erro ao deletar de ${table}:`, error.message);
+        } else {
+          console.log(`[SSVP][sync] ✅ ${table} limpo (sem registros)`);
         }
       } else {
-        const { error } = await supabase.from(table).delete().eq('user_id', userId).not('id', 'in', toInFilter(ids));
-        if (error && error.code !== 'PGRST116' && error.code !== '42P01') {
-          console.warn(`[SSVP] Erro ao limpar ${table}:`, error.message);
+        const deleteQuery = supabase.from(table).delete().eq('user_id', userId).not('id', 'in', toInFilter(ids));
+        const deleteResult = await withTimeout(deleteQuery as unknown as Promise<{ error: any }>, 10000);
+        const { error: deleteError } = deleteResult;
+        if (deleteError && deleteError.code !== 'PGRST116' && deleteError.code !== '42P01') {
+          console.warn(`[SSVP][sync] ⚠️ Erro ao limpar ${table}:`, deleteError.message);
         }
       }
 
-        if (rows.length > 0) {
-          // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
-          const payload = rows.map(r => {
-            const clean: any = { ...r, user_id: userId };
-            Object.keys(clean).forEach(key => {
-              // Remove undefined e strings vazias (exceto campos obrigatórios)
-              if (clean[key] === undefined || (typeof clean[key] === 'string' && clean[key].trim() === '' && key !== 'id' && key !== 'user_id')) {
-                delete clean[key];
-              }
-            });
-            return clean;
+      if (rows.length > 0) {
+        // Remove campos undefined e strings vazias antes de salvar (Supabase não aceita undefined)
+        const payload = rows.map(r => {
+          const clean: any = { ...r, user_id: userId };
+          Object.keys(clean).forEach(key => {
+            // Remove undefined e strings vazias (exceto campos obrigatórios)
+            if (clean[key] === undefined || (typeof clean[key] === 'string' && clean[key].trim() === '' && key !== 'id' && key !== 'user_id')) {
+              delete clean[key];
+            }
           });
+          return clean;
+        });
 
-          // Debug leve (sem PII): confirma campos enviados
-          if (table === 'families') {
-            const sample = payload[0];
-            if (sample) {
-              console.info('[SSVP][sync] families payload keys:', Object.keys(sample).sort());
-              console.info('[SSVP][sync] families sample flags:', {
-                has_ocupacao: Object.prototype.hasOwnProperty.call(sample, 'ocupacao'),
-                has_observacaoOcupacao: Object.prototype.hasOwnProperty.call(sample, 'observacaoOcupacao'),
-                id: sample.id
-              });
-            }
-          }
-
-          const { error, data } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
-          if (error) {
-            // Se a tabela não existe (404/PGRST116), apenas loga e continua
-            if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
-              console.warn(`[SSVP] Tabela ${table} não encontrada. Execute o SQL em Configurações.`, error);
-            } else {
-              console.error(`[SSVP] ❌ Erro ao sincronizar ${table}:`, {
-                message: error.message,
-                code: error.code,
-                details: error.details,
-                hint: error.hint
-              });
-            }
-          } else {
-            console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
+        // Debug leve (sem PII): confirma campos enviados
+        if (table === 'families') {
+          const sample = payload[0];
+          if (sample) {
+            console.info('[SSVP][sync] families payload keys:', Object.keys(sample).sort());
+            console.info('[SSVP][sync] families sample flags:', {
+              has_ocupacao: Object.prototype.hasOwnProperty.call(sample, 'ocupacao'),
+              has_observacaoOcupacao: Object.prototype.hasOwnProperty.call(sample, 'observacaoOcupacao'),
+              id: sample.id
+            });
           }
         }
+
+        const upsertQuery = supabase.from(table).upsert(payload, { onConflict: 'id' });
+        const upsertResult = await withTimeout(upsertQuery as unknown as Promise<{ error: any; data: any }>, 15000);
+        const { error, data } = upsertResult;
+        
+        if (error) {
+          // Se a tabela não existe (404/PGRST116), apenas loga e continua
+          if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
+            console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
+          } else {
+            console.error(`[SSVP][sync] ❌ Erro ao sincronizar ${table}:`, {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint
+            });
+          }
+        } else {
+          console.log(`[SSVP][sync] ✅ ${table} sincronizado com sucesso (${payload.length} registro(s))`);
+        }
+      }
     } catch (err: any) {
-      // Erros não críticos: apenas loga e continua
-      console.warn(`[SSVP] Erro ao sincronizar ${table}:`, err?.message || err);
+      if (err.message?.includes('Timeout')) {
+        console.error(`[SSVP][sync] ❌ Timeout ao sincronizar ${table} (requisição demorou mais de 15s)`);
+      } else {
+        console.error(`[SSVP][sync] ❌ Erro ao sincronizar ${table}:`, err?.message || err);
+      }
     }
   };
 
+  // IMPORTANTE: não rodar em paralelo por causa de FK (members/visits/deliveries referenciam families).
+  // Se rodar paralelo, pode falhar "foreign key violation" intermitentemente quando cria/edita família + membros.
   await syncTable('families', db.families);
   await syncTable('members', db.members);
   await syncTable('visits', db.visits);
   await syncTable('deliveries', db.deliveries);
+  console.log('[SSVP][sync] ✨ Sincronização completa!');
 };
