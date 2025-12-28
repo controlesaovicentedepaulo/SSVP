@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Users, Footprints, Package, Menu, X, User, LogOut, Save, ArrowLeft, Database } from 'lucide-react';
 import { AppView, Family, Visit, Delivery, Member, UserProfile } from './types';
-import { getDb, loadDbForUser, setCurrentUserId, signOut } from './db';
+import { getDb, loadDbForUser, setCurrentUserId, signOut, subscribeToDbChanges } from './db';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 import Dashboard from './components/Dashboard';
 import FamilyManager from './components/FamilyManager';
@@ -20,6 +20,15 @@ const App: React.FC = () => {
   const [userProfile, setUserProfile] = useState<UserProfile>({ name: 'Vicentino', initials: 'V', conference: 'Conferência SSVP' });
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   
+  // Subscribe para mudanças no DB em tempo real
+  useEffect(() => {
+    const unsubscribe = subscribeToDbChanges((freshData) => {
+      // Atualiza o estado React sempre que o DB muda (após saveDb)
+      setData(freshData);
+    });
+    return unsubscribe;
+  }, []);
+
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
   const [isLogoutConfirmModalOpen, setIsLogoutConfirmModalOpen] = useState(false);

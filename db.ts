@@ -30,6 +30,29 @@ export const getDb = (): DbSchema => {
 
 let inMemoryDb: DbSchema = INITIAL_DATA;
 
+// Sistema de callbacks para notificar mudanças no DB
+type DbChangeCallback = (data: DbSchema) => void;
+let dbChangeCallbacks: DbChangeCallback[] = [];
+
+export const subscribeToDbChanges = (callback: DbChangeCallback): (() => void) => {
+  dbChangeCallbacks.push(callback);
+  // Retorna função para unsubscribe
+  return () => {
+    dbChangeCallbacks = dbChangeCallbacks.filter(cb => cb !== callback);
+  };
+};
+
+const notifyDbChange = (data: DbSchema) => {
+  // Notifica todos os callbacks sobre a mudança
+  dbChangeCallbacks.forEach(cb => {
+    try {
+      cb(JSON.parse(JSON.stringify(data)) as DbSchema);
+    } catch (err) {
+      console.warn('[SSVP] Erro ao notificar mudança no DB:', err);
+    }
+  });
+};
+
 let currentUserId: string | null = null;
 export const setCurrentUserId = (userId: string | null) => {
   currentUserId = userId;
@@ -77,9 +100,21 @@ const withRetry = async <T>(
       
       if (attempt === maxRetries) throw err;
       
-      // Não faz retry para erros que não são timeout (validação, FK, etc)
+      // Para erros não-timeout, tenta uma vez mais antes de desistir (pode ser erro de rede transitório)
+      // Mas para erros de validação/FK claros, para imediatamente
       if (!err.message?.includes('Timeout')) {
-        console.error(`[SSVP][sync] ❌ Erro não é timeout, parando retries.`);
+        const isValidationError = err.code === '23505' || err.code === '23503' || err.code === '42P01' || err.code === 'PGRST116';
+        if (isValidationError && attempt < maxRetries) {
+          // Para erros de validação conhecidos, tenta mais uma vez com delay menor
+          console.warn(`[SSVP][sync] ⚠️ Erro de validação/FK detectado, tentando mais uma vez...`);
+          const delay = 500; // Delay menor para erros de validação
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        // Se já tentou tudo ou é erro definitivo, para
+        if (attempt === maxRetries) {
+          console.error(`[SSVP][sync] ❌ Erro não-timeout após todas as tentativas:`, err?.message || err);
+        }
         throw err;
       }
       
@@ -161,6 +196,8 @@ const scheduleSync = (data: DbSchema) => {
 
 export const saveDb = (data: DbSchema) => {
   inMemoryDb = data;
+  // Notifica todos os listeners sobre a mudança IMEDIATAMENTE
+  notifyDbChange(data);
   scheduleSync(data);
 };
 
@@ -324,6 +361,8 @@ export const loadDbForUser = async (userId: string | null): Promise<DbSchema> =>
   suppressSync = true;
   try {
     inMemoryDb = remote;
+    // Notifica mudanças quando carrega dados do Supabase
+    notifyDbChange(remote);
   } finally {
     suppressSync = false;
   }
@@ -337,6 +376,9 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
     console.warn('[SSVP][sync] ❌ Supabase não configurado.');
     return;
   }
+
+  // Array para rastrear quais tabelas falharam (para não parar tudo)
+  const failedTables: string[] = [];
 
   const syncTable = async (table: 'families' | 'members' | 'visits' | 'deliveries', rows: any[]) => {
     try {
@@ -397,7 +439,12 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
             
             if (error.code === 'PGRST116' || error.code === '42P01' || (error.message as any)?.includes?.('does not exist')) {
               console.warn(`[SSVP][sync] ⚠️ Tabela ${table} não encontrada. Execute o SQL em Configurações.`);
-              return; // Não throw, apenas retorna
+              return; // Não throw, apenas retorna (não é erro crítico)
+            } else if (error.code === '23503') {
+              // Foreign key violation - pode acontecer se a família ainda não foi criada
+              console.error(`[SSVP][sync] ❌ Erro de FK ao sincronizar ${table}:`, error.message);
+              console.warn(`[SSVP][sync] ⚠️ Isso pode acontecer se a ordem de sincronização estiver incorreta. Tentando novamente...`);
+              throw error; // Re-throw para tentar novamente com retry
             } else {
               throw error; // Re-throw para ser capturado pelo try/catch externo
             }
@@ -525,7 +572,10 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
       } else {
         console.error(`[SSVP][sync] ❌ Erro ao sincronizar ${table}:`, err?.message || err);
       }
-      throw err; // Re-throw para que a sincronização geral saiba que falhou
+      // Registra a tabela que falhou, mas não re-throw para não parar outras tabelas
+      failedTables.push(table);
+      console.warn(`[SSVP][sync] ⚠️ Continuando sincronização de outras tabelas mesmo com falha em ${table}`);
+      // Não faz throw - permite que outras tabelas sejam sincronizadas
     }
   };
 
@@ -535,5 +585,11 @@ export const syncDbToSupabase = async (db: DbSchema, userId: string) => {
   await syncTable('members', db.members);
   await syncTable('visits', db.visits);
   await syncTable('deliveries', db.deliveries);
-  console.log('[SSVP][sync] ✨ Sincronização completa!');
+  
+  if (failedTables.length > 0) {
+    console.warn(`[SSVP][sync] ⚠️ Sincronização concluída com falhas em: ${failedTables.join(', ')}`);
+    console.warn(`[SSVP][sync] ⚠️ As outras tabelas foram sincronizadas com sucesso.`);
+  } else {
+    console.log('[SSVP][sync] ✨ Sincronização completa!');
+  }
 };
